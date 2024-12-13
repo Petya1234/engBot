@@ -3,8 +3,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.enums import ParseMode
 from telethon import TelegramClient
-from telethon.tl.types import MessageEntityTextUrl
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.methods.get_chat import GetChat
 from aiogram.fsm.context import FSMContext
 from deep_translator import GoogleTranslator
 from langdetect import detect
@@ -23,12 +23,16 @@ session_name = SESSION_NAME
 class AwaitMessages(StatesGroup):
     uid_add = State()
     channels_add = State()
+    channels_deleting = State()
    
 async def parser(chat_name, limit):
     async with TelegramClient(session_name, api_id, api_hash) as client:
-        chat_info = await client.get_entity(chat_name)
-        msg = await client.get_messages(entity=chat_info, limit=limit)
-        return ({"messages": msg, "channel": chat_info})
+        try:
+            chat_info = await client.get_entity(chat_name)
+            msg = await client.get_messages(entity=chat_info, limit=limit)
+            return ({"messages": msg, "channel": chat_info})
+        except:
+            return "error"
 
 async def translatorFunc(text, lang):
     translated = GoogleTranslator(source='auto', target=lang).translate(text) 
@@ -79,8 +83,11 @@ async def get_linked_messages(text, entities):
             s += text[none_linked_text[i-1][1]:none_linked_text[i][0]]
         s += links_to_send[j]
         j+=1
-    s += text[none_linked_text[-1][1]:]
-    return s 
+    try:
+        s += text[none_linked_text[-1][1]:]
+        return s
+    except:
+        return "err"
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
@@ -99,7 +106,7 @@ async def echo_handler(callback: CallbackQuery, state: FSMContext) -> None:
         
     else:
         await callback.answer("You already in system")
-    await callback.message.answer("Now you can send me channel links in format @*channels\nSay 'enough' to stop")
+    await callback.message.answer("Now you can send me channel links in format @channel_name\nSay 'enough' to stop or skip")
     await state.set_state(AwaitMessages.channels_add)
     await state.update_data(channels = [])
 
@@ -119,24 +126,68 @@ async def echo_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     for item in data["channels"]:
         await dbAgent.add_channels_by_uid(message.chat.id, item)
-    await message.answer("OK\nLet's parse", reply_markup=kb.parse)
+    await message.answer("OK\nLet's parse or view list of your channels", reply_markup=kb.parseAndview)
+    
     
 #callback parse messages
 @router.callback_query(F.data == 'parse')
-async def echo_handler(callback: CallbackQuery, ) -> None:
+async def echo_handler(callback: CallbackQuery, state: FSMContext) -> None:
     channels = await dbAgent.get_channels_by_uid(callback.message.chat.id)
     for item in channels:
         res =  await parser(item[0], 1)
-        text = res["messages"][0].to_dict()['message']
-        entities = res["messages"][0].to_dict()['entities']
-        msg = await get_linked_messages(text, entities)
-        if not(item[0] in msg):
-            msg += "\n" + item[0] + "\n"
-        if detect(msg) == 'ru':
-            await callback.message.answer(msg, reply_markup = kb.translatorEN, parse_mode=ParseMode.HTML)
+        if res != "error":
+            text = res["messages"][0].to_dict()['message']
+            entities = res["messages"][0].to_dict()['entities']
+            msg = await get_linked_messages(text, entities)
+            if msg != "err":
+                if not(item[0] in msg):
+                    msg += "\n" + item[0] + "\n"
+                if detect(msg) == 'ru':
+                    await callback.message.answer(msg, reply_markup = kb.translatorEN, parse_mode=ParseMode.HTML)
+                else:
+                    await callback.message.answer(msg, reply_markup = kb.translatorRU, parse_mode=ParseMode.HTML)
+            else:
+                continue 
         else:
-            await callback.message.answer(msg, reply_markup = kb.translatorRU, parse_mode=ParseMode.HTML)
+            await callback.message.answer(f"Something went wrong with channel {item[0]}\nI will delete this from table")
+            await state.set_state(AwaitMessages.channels_deleting)
+            await state.update_data(uidAndChannel= (callback.message.chat.id, item[0]))
+            channels = await state.get_data()
+            await dbAgent.delete_channels_by_uid(channels['uidAndChannel'][0],channels['uidAndChannel'][1])
+            await state.clear()
+    await callback.message.answer(f"If you want to parse again or view list of channes click buttons below", reply_markup=kb.parseAndview)
+    await callback.message.answer(f"If you want to add more channels click button below", reply_markup=kb.addMore)
     
+    
+#callback add more channels
+@router.callback_query(F.data == 'add')
+async def echo_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.answer("Now you can send me channel links in format @channel_name\nSay 'enough' to stop or skip")
+    await state.set_state(AwaitMessages.channels_add)
+    await state.update_data(channels = [])
+  
+  
+#callback view channels list by uid
+@router.callback_query(F.data == 'show')
+async def echo_handler(callback: CallbackQuery, state: FSMContext) -> None:
+    channels = await dbAgent.get_channels_by_uid(callback.message.chat.id)
+    for item in channels:
+        await callback.message.answer(f"{item[0]}\n")
+    await callback.message.answer(f"If you want to parse click button below", reply_markup=kb.parse)
+    await callback.message.answer(f"If you want to add more channels click button below", reply_markup=kb.addMore)
+        
+#callback tranclate to ru
+@router.callback_query(F.data == 'change')
+async def echo_handler(callback: CallbackQuery, ) -> None:
+    text = callback.message.text
+    entities = callback.message.entities
+    if(detect(text) == 'en'):
+        links = await get_tranalsted_links(text, entities, 'ru')
+        tranlated = await translatorFunc(callback.message.text ,'ru')
+        await callback.message.reply(tranlated + "\n" + "\n".join(links), parse_mode=ParseMode.HTML)
+    else: 
+        await callback.answer("Already in chosen language!")
+            
 #callback tranclate to ru
 @router.callback_query(F.data == 'ru')
 async def echo_handler(callback: CallbackQuery, ) -> None:

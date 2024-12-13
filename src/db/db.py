@@ -24,10 +24,13 @@ class usersAndChannels():
     
     async def add_channels_by_uid(self, uid, channel):
         try:
-         
             cursor.execute("INSERT INTO channels (uid, channel) VALUES (%s, %s)", (uid,channel))
             conn.commit()
         except:
-       
             conn.commit()
             return "repeat"
+        
+    async def delete_channels_by_uid(self, uid, channel):
+        cursor.execute("DELETE FROM channels WHERE uid=%s AND channel=%s", (uid,channel))
+        conn.commit()
+    
