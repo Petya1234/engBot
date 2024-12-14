@@ -4,7 +4,6 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.enums import ParseMode
 from telethon import TelegramClient
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.methods.get_chat import GetChat
 from aiogram.fsm.context import FSMContext
 from deep_translator import GoogleTranslator
 from langdetect import detect
@@ -75,7 +74,7 @@ async def get_linked_messages(text, entities):
         links_to_send.append(rem)
     s = ""
     j = 0
-   
+    
     for i in range(len(none_linked_text)):
         if i == 0:
             s += text[:none_linked_text[i][0]]
@@ -83,11 +82,11 @@ async def get_linked_messages(text, entities):
             s += text[none_linked_text[i-1][1]:none_linked_text[i][0]]
         s += links_to_send[j]
         j+=1
-    try:
+    if (len(none_linked_text) > 0):
         s += text[none_linked_text[-1][1]:]
         return s
-    except:
-        return "err"
+    else:
+        return text
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
@@ -147,7 +146,7 @@ async def echo_handler(callback: CallbackQuery, state: FSMContext) -> None:
                 else:
                     await callback.message.answer(msg, reply_markup = kb.translatorRU, parse_mode=ParseMode.HTML)
             else:
-                continue 
+                continue
         else:
             await callback.message.answer(f"Something went wrong with channel {item[0]}\nI will delete this from table")
             await state.set_state(AwaitMessages.channels_deleting)
